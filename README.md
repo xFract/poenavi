@@ -129,6 +129,7 @@ python main.py
 ## 🚀 使い方
 
 1. アプリを起動
+   - 初回起動時にWindows SmartScreenの警告が表示される場合があります。「詳細情報」→「実行」で起動できます（コード署名証明書を使用していないためです）
 2. ⚙ボタン（または右クリック →「設定」）を開く
 3. **基本設定** タブ → 「PoE ログファイル」に `Client.txt` のパスを設定
    - 通常: `C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt`
