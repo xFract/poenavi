@@ -687,17 +687,10 @@ class MainWindow(QMainWindow):
         self.visit_btn.setStyleSheet(self._visit_btn_style())
 
     def _current_zone_id(self):
-        """現在のゾーンのzone_idを返す"""
+        """現在のゾーンのzone_idを返す（_get_zone_idに委譲）"""
         if not self.current_zone:
             return None
-        zone_name = self.current_zone
-        for zid, zinfo in self.zone_data.items():
-            if isinstance(zinfo, dict) and zinfo.get("name") == zone_name:
-                return zid
-            # part2対応
-            if isinstance(zinfo, dict) and zinfo.get("name2") == zone_name:
-                return zid
-        return None
+        return self._get_zone_id(self.current_zone)
 
     def toggle_part2(self):
         """Part 1/2を手動トグル"""

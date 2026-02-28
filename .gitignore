@@ -19,10 +19,6 @@ runs/
 # Work files
 area_level_mapping.txt
 
-# Build resources (not needed by users)
-icon.png
-
 # OS
 .DS_Store
 Thumbs.db
-icon.ico
