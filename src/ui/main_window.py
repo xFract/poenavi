@@ -473,7 +473,22 @@ class MainWindow(QMainWindow):
         self.lap_toggle_btn.clicked.connect(self.toggle_lap)
         self.lap_toggle_btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         timer_content_layout.addSpacing(10)
-        timer_content_layout.addWidget(self.lap_toggle_btn)
+        
+        # ラップタイム行：トグルボタン + 自動/手動ボタン
+        lap_header_layout = QHBoxLayout()
+        lap_header_layout.setContentsMargins(0, 0, 0, 0)
+        lap_header_layout.setSpacing(8)
+        lap_header_layout.addWidget(self.lap_toggle_btn)
+        
+        self.auto_lap = self.config.get("auto_lap", True)
+        self.auto_lap_btn = QPushButton("自動" if self.auto_lap else "手動")
+        self.auto_lap_btn.setStyleSheet(self._auto_lap_btn_style())
+        self.auto_lap_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.auto_lap_btn.clicked.connect(self.toggle_auto_lap)
+        self.auto_lap_btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        lap_header_layout.addWidget(self.auto_lap_btn)
+        lap_header_layout.addStretch()
+        timer_content_layout.addLayout(lap_header_layout)
         
         # ラップタイムリスト（折りたたみ対象）
         self.lap_content = QWidget()
@@ -721,6 +736,71 @@ class MainWindow(QMainWindow):
                 }}
                 QPushButton:hover {{ color: {Styles.TEXT_COLOR}; border-color: {Styles.TEXT_COLOR}; }}
             """
+
+    # === 自動ラップ機能 ===
+    # Act完了トリガー: {エリア名: Actラップ番号}
+    AUTO_LAP_TRIGGERS = {
+        "南の森": 1, "The Southern Forest": 1,
+        "サーン市街": 2, "The City of Sarn": 2,
+        "水道橋": 3, "The Aqueduct": 3,
+        "奴隷収容所": 4, "The Slave Pens": 4,
+        # Act5 = kitava_defeated シグナル (lap 5)
+        "橋の野営地": 6, "The Bridge Encampment": 6,
+        "サーンの城壁": 7, "The Sarn Ramparts": 7,
+        "血の水道橋": 8, "The Blood Aqueduct": 8,
+        "オリアスの船着場": 9, "Oriath Docks": 9,
+        # Act10 = act10_cleared シグナル (lap 10)
+    }
+
+    def _auto_lap_btn_style(self):
+        if self.auto_lap:
+            return f"""
+                QPushButton {{
+                    background: rgba(100,200,255,0.25); color: #64c8ff;
+                    border: 1px solid #64c8ff; border-radius: 3px;
+                    padding: 2px 6px; font-size: 10px; font-weight: bold;
+                }}
+                QPushButton:hover {{ background: rgba(100,200,255,0.4); }}
+            """
+        else:
+            return f"""
+                QPushButton {{
+                    background: transparent; color: #888888;
+                    border: 1px solid #555555; border-radius: 3px;
+                    padding: 2px 6px; font-size: 10px;
+                }}
+                QPushButton:hover {{ color: {Styles.TEXT_COLOR}; border-color: {Styles.TEXT_COLOR}; }}
+            """
+
+    def toggle_auto_lap(self):
+        self.auto_lap = not self.auto_lap
+        self.auto_lap_btn.setText("自動" if self.auto_lap else "手動")
+        self.auto_lap_btn.setStyleSheet(self._auto_lap_btn_style())
+        self.config["auto_lap"] = self.auto_lap
+        ConfigManager.save_config(self.config)
+
+    def _try_auto_lap(self, zone_name: str):
+        """エリア入場時に自動ラップを試行"""
+        if not self.auto_lap or not self.is_running:
+            return
+        lap_num = self.AUTO_LAP_TRIGGERS.get(zone_name)
+        if lap_num is None:
+            return
+        # Act1トリガー(南の森)はAct6にも同名あるのでpart2_modeで判別
+        if lap_num == 1 and self.part2_mode:
+            return
+        # 現在のActと一致する場合のみ記録（重複・順序ずれ防止）
+        if lap_num == self.current_act:
+            print(f"[AUTO-LAP] Act{lap_num}完了 — {zone_name}")
+            self.record_lap()
+
+    def _auto_lap_kitava(self, lap_num: int):
+        """キタヴァ撃破による自動ラップ"""
+        if not self.auto_lap or not self.is_running:
+            return
+        if lap_num == self.current_act:
+            print(f"[AUTO-LAP] Act{lap_num}完了 — キタヴァ撃破")
+            self.record_lap()
 
     def toggle_visit_override(self):
         """訪問回数の表示を一時的に切り替え（自動→1回目→2回目→自動）"""
@@ -1160,6 +1240,9 @@ class MainWindow(QMainWindow):
         print(f"[DEBUG] zone={zone_name}, id={zone_id}, visit_num={visit_num}, restoring={self._restoring}, counts={self.zone_visit_counts}")
         
         self.current_zone = zone_name
+        # 自動ラップ判定（復元中は除外）
+        if not self._restoring:
+            self._try_auto_lap(zone_name)
         act_name, zone_level = get_zone_info(self.zone_data, zone_name, part2=self.part2_mode)
         
         # monster_levels.jsonからモンスターレベルを取得（優先）
@@ -1222,13 +1305,15 @@ class MainWindow(QMainWindow):
         self.map_thumbnail.load_maps(map_zone_name, part2=self.part2_mode)
     
     def on_kitava_defeated(self):
-        """Act5キタヴァ討伐 → Act6-10に切替"""
+        """Act5キタヴァ討伐 → Act6-10に切替 + 自動ラップ"""
         if not self.part2_mode:
             print("[INFO] キタヴァ討伐を検知 — Act 6-10に切替")
             self._set_part2(True)
+        self._auto_lap_kitava(5)
     
     def on_act10_cleared(self):
-        """Act10キタヴァ討伐 → クリアメッセージ表示"""
+        """Act10キタヴァ討伐 → クリアメッセージ表示 + 自動ラップ"""
+        self._auto_lap_kitava(10)
         print("[INFO] Act10キタヴァ討伐を検知 — クリアメッセージ表示")
         clear_html = (
             '<div style="text-align: center; padding: 20px;">'
