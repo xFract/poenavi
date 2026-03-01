@@ -8,7 +8,7 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QDialog
 )
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, Signal, QPoint
 from PySide6.QtGui import QPixmap, QCursor, QPainter
 
 
@@ -106,7 +106,8 @@ class MapImageDialog(QDialog):
         self.all_paths = all_paths or [image_path]
         self.current_index = self.all_paths.index(image_path) if image_path in self.all_paths else 0
         self._pixmaps = {}  # キャッシュ
-        
+        self._target_pos = None  # showEvent で適用する位置
+
         self.setWindowTitle(os.path.basename(image_path))
         self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint)
         self.setStyleSheet("background: #111122;")
@@ -174,6 +175,16 @@ class MapImageDialog(QDialog):
         self.info_label.setText(f"{fname}  ({idx}/{total})   {nav_hint}")
         self.setWindowTitle(f"{fname} ({idx}/{total})")
     
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._target_pos is not None:
+            self.move(self._target_pos)
+            # exec() がイベントループ内で再配置するのを上書き
+            from PySide6.QtCore import QTimer
+            pos = self._target_pos
+            QTimer.singleShot(10, lambda: self.move(pos))
+            QTimer.singleShot(50, lambda: self.move(pos))
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # リサイズ時に画像を再フィット
@@ -189,6 +200,20 @@ class MapImageDialog(QDialog):
         ConfigManager.save_config(config)
         super().closeEvent(event)
     
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and len(self.all_paths) > 1:
+            # ダイアログの左半分クリック → 前へ、右半分 → 次へ
+            if event.position().x() >= self.width() / 2:
+                if self.current_index < len(self.all_paths) - 1:
+                    self.current_index += 1
+                    self._show_image()
+            else:
+                if self.current_index > 0:
+                    self.current_index -= 1
+                    self._show_image()
+        else:
+            super().mousePressEvent(event)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.close()
@@ -214,6 +239,7 @@ class MapThumbnailWidget(QWidget):
         super().__init__(parent)
         self.current_paths = []
         self._thumbs = []
+        self._open_dialog = None
         
         self.setStyleSheet("background: transparent;")
         
@@ -239,6 +265,10 @@ class MapThumbnailWidget(QWidget):
     
     def load_maps(self, zone_name: str, part2: bool = False):
         """ゾーンのマップ画像を読み込んで表示"""
+        # 開いているマップダイアログを閉じる
+        if self._open_dialog is not None:
+            self._open_dialog.close()
+            self._open_dialog = None
         self._clear_thumbs()
         
         paths = load_zone_maps(zone_name, part2=part2)
@@ -270,9 +300,48 @@ class MapThumbnailWidget(QWidget):
             row_layout.addWidget(thumb)
     
     def _on_thumb_clicked(self, image_path: str):
-        """サムネイルクリック → 拡大表示"""
-        dialog = MapImageDialog(image_path, all_paths=self.current_paths, parent=self.window())
+        """サムネイルクリック → 拡大表示（メインウィンドウと同じモニターの左隣に配置）"""
+        # 親なしで作成（exec()による親基準の中央配置を防ぐ）
+        dialog = MapImageDialog(image_path, all_paths=self.current_paths, parent=None)
+
+        # メインウィンドウがいるモニター基準で隣に配置
+        main_win = self.window()
+        if main_win:
+            from PySide6.QtWidgets import QApplication
+            main_geo = main_win.frameGeometry()
+            dialog_w = dialog.width()
+            dialog_h = dialog.height()
+
+            # メインウィンドウがいるモニターを特定
+            main_center = main_geo.center()
+            screen = QApplication.screenAt(main_center)
+            if not screen:
+                screen = QApplication.primaryScreen()
+            if screen:
+                sg = screen.availableGeometry()
+
+                # 左側にぴったりくっつけて配置（同じモニター内に収める）
+                left_x = main_geo.left() - dialog_w
+                right_x = main_geo.right() + 1
+
+                if left_x >= sg.left():
+                    x = left_x
+                elif right_x + dialog_w <= sg.left() + sg.width():
+                    x = right_x
+                else:
+                    x = sg.left()
+
+                # 縦位置はメインウィンドウの上端に合わせる（画面内に収める）
+                y = main_geo.top()
+                if y + dialog_h > sg.top() + sg.height():
+                    y = max(sg.top(), sg.top() + sg.height() - dialog_h)
+
+                dialog.move(x, y)
+                dialog._target_pos = QPoint(x, y)
+
+        self._open_dialog = dialog
         dialog.exec()
+        self._open_dialog = None
     
     def _clear_thumbs(self):
         """サムネイルを全削除"""
@@ -290,6 +359,9 @@ class MapThumbnailWidget(QWidget):
     
     def clear(self):
         """表示をクリア"""
+        if self._open_dialog is not None:
+            self._open_dialog.close()
+            self._open_dialog = None
         self._clear_thumbs()
         self.current_paths = []
         self.setVisible(False)
