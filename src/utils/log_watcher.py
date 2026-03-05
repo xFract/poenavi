@@ -108,6 +108,8 @@ class LogWatcher(QObject):
                         m = self.SET_SOURCE_PATTERN.search(line)
                     if m:
                         zone_name = m.group(1).strip()
+                        if zone_name == "(null)":
+                            continue  # 無効エントリをスキップ
                         self.zone_entered.emit(zone_name)
                         found_zone = True
                         print(f"[LogWatcher] Restored zone: {zone_name}")
